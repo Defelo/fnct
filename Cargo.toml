@@ -1,0 +1,15 @@
+[package]
+name = "fnct"
+version = "0.1.0"
+description = ""
+license = "MIT"
+documentation = "https://docs.rs/fnct/"
+repository = "https://github.com/Defelo/fnct"
+edition = "2021"
+
+[dependencies]
+base64 = { version = "0.21.0", default-features = false, features = ["std"] }
+postcard = { version = "1.0.4", default-features = false, features = ["use-std"] }
+redis = { version = "0.22.3", default-features = false, features = ["tokio-comp", "connection-manager"] }
+serde = { version = "1.0.158", default-features = false }
+thiserror = { version = "1.0.40", default-features = false }
