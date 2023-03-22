@@ -5,10 +5,10 @@
 //! use std::time::Duration;
 //!
 //! use fnct::async_redis::AsyncRedisCache;
-//! use redis::{aio::ConnectionManager, Client};
+//! use redis::{aio::MultiplexedConnection, Client};
 //!
 //! struct Application {
-//!     cache: AsyncRedisCache<ConnectionManager>,
+//!     cache: AsyncRedisCache<MultiplexedConnection>,
 //! }
 //!
 //! impl Application {
@@ -24,7 +24,7 @@
 //!
 //! # async {
 //! let client = Client::open("redis://localhost:6379/0").unwrap();
-//! let conn = ConnectionManager::new(client).await.unwrap();
+//! let conn = client.get_multiplexed_async_connection().await.unwrap();
 //! let app = Application {
 //!     cache: AsyncRedisCache::new(conn, "my_application".to_owned(), Duration::from_secs(600)),
 //! };
