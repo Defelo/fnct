@@ -1,7 +1,7 @@
 [package]
 name = "fnct"
 version = "0.1.0"
-description = ""
+description = "Simple caching library that supports cache invalidation via tags"
 license = "MIT"
 documentation = "https://docs.rs/fnct/"
 repository = "https://github.com/Defelo/fnct"
