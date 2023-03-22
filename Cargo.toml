@@ -13,3 +13,6 @@ postcard = { version = "1.0.4", default-features = false, features = ["use-std"]
 redis = { version = "0.22.3", default-features = false, features = ["tokio-comp"] }
 serde = { version = "1.0.158", default-features = false }
 thiserror = { version = "1.0.40", default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1.26.0", default-features = false, features = ["macros", "rt-multi-thread", "time", "parking_lot"] }

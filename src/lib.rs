@@ -13,7 +13,7 @@
 //!
 //! impl Application {
 //!     async fn cached_function(&self, a: i32, b: i32) -> i32 {
-//!         self.cache.cached((a, b), &["sum"], async move {
+//!         self.cache.cached((a, b), &["sum"], None, async move {
 //!             // expensive computation
 //!             a + b
 //!         })
@@ -28,10 +28,10 @@
 //! let app = Application {
 //!     cache: AsyncRedisCache::new(conn, "my_application".to_owned(), Duration::from_secs(600)),
 //! };
-//! assert_eq!(app.cached_function(1, 2).await, 3); // running expensive computation and filling cache
-//! assert_eq!(app.cached_function(1, 2).await, 3); // loading result from cache
-//! app.cache.invalidate_key((1, 2)).await.unwrap(); // invalidate cache by key
-//! app.cache.invalidate_tag("sum").await.unwrap(); // invalidate cache by tag
+//! assert_eq!(app.cached_function(1, 2).await, 3); // run expensive computation and fill cache
+//! assert_eq!(app.cached_function(1, 2).await, 3); // load result from cache
+//! app.cache.pop_key((1, 2)).await.unwrap(); // invalidate cache by key
+//! app.cache.pop_tag("sum").await.unwrap(); // invalidate cache by tag
 //! # };
 //! ```
 
@@ -45,5 +45,5 @@ use serde::Serialize;
 pub mod async_redis;
 
 fn make_key(key: impl Serialize) -> Result<String, postcard::Error> {
-    Ok(general_purpose::STANDARD.encode(postcard::to_stdvec(&key)?))
+    Ok(general_purpose::STANDARD_NO_PAD.encode(postcard::to_stdvec(&key)?))
 }

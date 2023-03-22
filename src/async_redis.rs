@@ -48,6 +48,7 @@ where
         &self,
         key: K,
         tags: &[&str],
+        ttl: Option<Duration>,
         func: F,
     ) -> Result<T, AsyncRedisCacheError>
     where
@@ -59,15 +60,51 @@ where
             &mut self.conn.clone(),
             &self.namespace,
             key,
-            self.default_ttl,
             tags,
+            ttl.unwrap_or(self.default_ttl),
             func,
         )
         .await
     }
 
+    /// Get a specific cache entry by its key.
+    pub async fn get<T, K>(&self, key: K) -> Result<Option<T>, AsyncRedisCacheError>
+    where
+        T: Serialize + DeserializeOwned,
+        K: Serialize,
+    {
+        match get::<Vec<u8>>(&mut self.conn.clone(), &self.namespace, &make_key(key)?).await? {
+            Some(serialized) => Ok(Some(postcard::from_bytes(&serialized)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Insert a new or update an existing cache entry.
+    pub async fn put<T, K>(
+        &self,
+        key: K,
+        value: T,
+        tags: &[&str],
+        ttl: Option<Duration>,
+    ) -> Result<(), AsyncRedisCacheError>
+    where
+        T: Serialize + DeserializeOwned,
+        K: Serialize,
+    {
+        let serialized = postcard::to_stdvec(&value)?;
+        Ok(put(
+            &mut self.conn.clone(),
+            &self.namespace,
+            &make_key(key)?,
+            &serialized,
+            tags,
+            ttl.unwrap_or(self.default_ttl),
+        )
+        .await?)
+    }
+
     /// Invalidate a specific cache entry by its key.
-    pub async fn invalidate_key<K>(&self, key: K) -> Result<(), AsyncRedisCacheError>
+    pub async fn pop_key<K>(&self, key: K) -> Result<(), AsyncRedisCacheError>
     where
         K: Serialize,
     {
@@ -75,12 +112,12 @@ where
     }
 
     /// Invalidate all cache entries that are associated with the given tag.
-    pub async fn invalidate_tag(&self, tag: &str) -> Result<(), AsyncRedisCacheError> {
+    pub async fn pop_tag(&self, tag: &str) -> Result<(), AsyncRedisCacheError> {
         Ok(pop_tag(&mut self.conn.clone(), &self.namespace, tag).await?)
     }
 
     /// Invalidate all cache entries that are associated with ALL of the given tags.
-    pub async fn invalidate_tags(&self, tags: &[&str]) -> Result<(), AsyncRedisCacheError> {
+    pub async fn pop_tags(&self, tags: &[&str]) -> Result<(), AsyncRedisCacheError> {
         Ok(pop_tags(&mut self.conn.clone(), &self.namespace, tags).await?)
     }
 }
@@ -90,8 +127,8 @@ pub async fn cached<T, K, F>(
     redis: &mut impl AsyncCommands,
     namespace: &str,
     key: K,
-    ttl: Duration,
     tags: &[&str],
+    ttl: Duration,
     func: F,
 ) -> Result<T, AsyncRedisCacheError>
 where
@@ -105,7 +142,7 @@ where
     }
     let value = func.await;
     let serialized = postcard::to_stdvec(&value)?;
-    put(redis, namespace, &key, &serialized, ttl, tags).await?;
+    put(redis, namespace, &key, &serialized, tags, ttl).await?;
     Ok(value)
 }
 
@@ -127,8 +164,8 @@ pub async fn put<T: ToRedisArgs>(
     namespace: &str,
     key: &str,
     value: &T,
-    ttl: Duration,
     tags: &[&str],
+    ttl: Duration,
 ) -> RedisResult<()> {
     let mut pipe = redis::pipe();
     pipe.set_ex(
