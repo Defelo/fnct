@@ -66,6 +66,59 @@ where
         )
         .await
     }
+    /// Wrap a function to add a caching layer using redis.
+    /// Cache [`Option::Some`] variants only.
+    ///
+    /// This is just a wrapper for the [`cached_option()`] function in this module.
+    pub async fn cached_option<T, K, F>(
+        &self,
+        key: K,
+        tags: &[&str],
+        ttl: Option<Duration>,
+        func: F,
+    ) -> Result<Option<T>, AsyncRedisCacheError>
+    where
+        F: Future<Output = Option<T>>,
+        T: Serialize + DeserializeOwned,
+        K: Serialize,
+    {
+        cached_option(
+            &mut self.conn.clone(),
+            &self.namespace,
+            key,
+            tags,
+            ttl.unwrap_or(self.default_ttl),
+            func,
+        )
+        .await
+    }
+
+    /// Wrap a function to add a caching layer using redis.
+    /// Cache [`Result::Ok`] variants only.
+    ///
+    /// This is just a wrapper for the [`cached_result()`] function in this module.
+    pub async fn cached_result<T, E, K, F>(
+        &self,
+        key: K,
+        tags: &[&str],
+        ttl: Option<Duration>,
+        func: F,
+    ) -> Result<Result<T, E>, AsyncRedisCacheError>
+    where
+        F: Future<Output = Result<T, E>>,
+        T: Serialize + DeserializeOwned,
+        K: Serialize,
+    {
+        cached_result(
+            &mut self.conn.clone(),
+            &self.namespace,
+            key,
+            tags,
+            ttl.unwrap_or(self.default_ttl),
+            func,
+        )
+        .await
+    }
 
     /// Get a specific cache entry by its key.
     pub async fn get<T, K>(&self, key: K) -> Result<Option<T>, AsyncRedisCacheError>
@@ -144,6 +197,57 @@ where
     let serialized = postcard::to_stdvec(&value)?;
     put(redis, namespace, &key, &serialized, tags, ttl).await?;
     Ok(value)
+}
+
+/// Wrap a function to add a caching layer using the functions in this module.
+/// Cache [`Option::Some`] variants only.
+pub async fn cached_option<T, K, F>(
+    redis: &mut impl AsyncCommands,
+    namespace: &str,
+    key: K,
+    tags: &[&str],
+    ttl: Duration,
+    func: F,
+) -> Result<Option<T>, AsyncRedisCacheError>
+where
+    F: Future<Output = Option<T>>,
+    T: Serialize + DeserializeOwned,
+    K: Serialize,
+{
+    Ok(cached_result(redis, namespace, key, tags, ttl, async {
+        func.await.ok_or(())
+    })
+    .await?
+    .ok())
+}
+
+/// Wrap a function to add a caching layer using the functions in this module.
+/// Cache [`Result::Ok`] variants only.
+pub async fn cached_result<T, E, K, F>(
+    redis: &mut impl AsyncCommands,
+    namespace: &str,
+    key: K,
+    tags: &[&str],
+    ttl: Duration,
+    func: F,
+) -> Result<Result<T, E>, AsyncRedisCacheError>
+where
+    F: Future<Output = Result<T, E>>,
+    T: Serialize + DeserializeOwned,
+    K: Serialize,
+{
+    let key = make_key(key)?;
+    if let Some(value) = get::<Vec<u8>>(redis, namespace, &key).await? {
+        return Ok(Ok(postcard::from_bytes(&value)?));
+    }
+    match func.await {
+        Ok(value) => {
+            let serialized = postcard::to_stdvec(&value)?;
+            put(redis, namespace, &key, &serialized, tags, ttl).await?;
+            Ok(Ok(value))
+        }
+        Err(err) => Ok(Err(err)),
+    }
 }
 
 /// Get a cached value.

@@ -38,6 +38,104 @@ async fn test_cached() {
 }
 
 #[tokio::test]
+async fn test_cached_option() {
+    let cache = get_cache("test_cached_option").await;
+
+    struct App {
+        cache: AsyncRedisCache<MultiplexedConnection>,
+    }
+
+    impl App {
+        async fn expensive_computation(&self, a: i32, b: i32) -> Option<i32> {
+            self.cache
+                .cached_option((a, b), &[], None, async {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    if a > 0 {
+                        Some(a + b)
+                    } else {
+                        None
+                    }
+                })
+                .await
+                .unwrap()
+        }
+    }
+
+    let app = App { cache };
+
+    let now = Instant::now();
+    assert_eq!(app.expensive_computation(-1, 2).await, None);
+    assert!(now.elapsed() >= Duration::from_secs(2));
+
+    let now = Instant::now();
+    assert_eq!(app.expensive_computation(-1, 2).await, None);
+    assert!(now.elapsed() >= Duration::from_secs(2));
+
+    let now = Instant::now();
+    assert_eq!(app.expensive_computation(1, 2).await, Some(3));
+    assert!(now.elapsed() >= Duration::from_secs(2));
+
+    let now = Instant::now();
+    assert_eq!(app.expensive_computation(1, 2).await, Some(3));
+    assert_eq!(app.expensive_computation(1, 2).await, Some(3));
+    assert_eq!(app.expensive_computation(1, 2).await, Some(3));
+    assert!(now.elapsed() < Duration::from_secs(3));
+}
+
+#[tokio::test]
+async fn test_cached_result() {
+    let cache = get_cache("test_cached_result").await;
+
+    struct App {
+        cache: AsyncRedisCache<MultiplexedConnection>,
+    }
+
+    impl App {
+        async fn expensive_computation(&self, a: i32, b: i32) -> Result<i32, bool> {
+            self.cache
+                .cached_result((a, b), &[], None, async {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    if a > 0 {
+                        Ok(a + b)
+                    } else {
+                        Err(a == 0)
+                    }
+                })
+                .await
+                .unwrap()
+        }
+    }
+
+    let app = App { cache };
+
+    let now = Instant::now();
+    assert_eq!(app.expensive_computation(-1, 2).await, Err(false));
+    assert!(now.elapsed() >= Duration::from_secs(2));
+
+    let now = Instant::now();
+    assert_eq!(app.expensive_computation(-1, 2).await, Err(false));
+    assert!(now.elapsed() >= Duration::from_secs(2));
+
+    let now = Instant::now();
+    assert_eq!(app.expensive_computation(0, 2).await, Err(true));
+    assert!(now.elapsed() >= Duration::from_secs(2));
+
+    let now = Instant::now();
+    assert_eq!(app.expensive_computation(0, 2).await, Err(true));
+    assert!(now.elapsed() >= Duration::from_secs(2));
+
+    let now = Instant::now();
+    assert_eq!(app.expensive_computation(1, 2).await, Ok(3));
+    assert!(now.elapsed() >= Duration::from_secs(2));
+
+    let now = Instant::now();
+    assert_eq!(app.expensive_computation(1, 2).await, Ok(3));
+    assert_eq!(app.expensive_computation(1, 2).await, Ok(3));
+    assert_eq!(app.expensive_computation(1, 2).await, Ok(3));
+    assert!(now.elapsed() < Duration::from_secs(3));
+}
+
+#[tokio::test]
 async fn test_basic_insert_expire() {
     let cache = get_cache("test_basic_insert_expire").await;
     assert_eq!(cache.get::<String, _>("foo").await.unwrap(), None);
@@ -169,7 +267,6 @@ async fn test_delete_by_tags_intersect() {
 #[tokio::test]
 async fn test_delete_by_tags_all() {
     let cache = get_cache("test_delete_by_tags_all").await;
-
     cache
         .put("foo", 1, &["t1", "t2", "t3"], None)
         .await
