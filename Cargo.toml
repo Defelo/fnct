@@ -6,6 +6,7 @@ license = "MIT"
 documentation = "https://docs.rs/fnct/"
 repository = "https://github.com/Defelo/fnct"
 edition = "2021"
+rust-version = "1.63.0"
 
 [dependencies]
 base64 = { version = "0.21.0", default-features = false, features = ["std"] }
