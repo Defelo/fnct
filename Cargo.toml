@@ -11,7 +11,7 @@ rust-version = "1.63.0"
 [dependencies]
 base64 = { version = "0.21.0", default-features = false, features = ["std"] }
 postcard = { version = "1.0.4", default-features = false, features = ["use-std"] }
-redis = { version = "0.22.3", default-features = false, features = ["tokio-comp"] }
+redis = { version = "0.23.0", default-features = false, features = ["tokio-comp"] }
 serde = { version = "1.0.158", default-features = false }
 thiserror = { version = "1.0.40", default-features = false }
 
