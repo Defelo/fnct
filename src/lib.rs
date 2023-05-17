@@ -39,11 +39,16 @@
 #![warn(clippy::dbg_macro, clippy::use_debug)]
 #![warn(missing_docs, missing_debug_implementations)]
 
-use base64::{engine::general_purpose, Engine};
 use serde::Serialize;
+use sha2::{Digest, Sha512};
 
 pub mod async_redis;
 
 fn make_key(key: impl Serialize) -> Result<String, postcard::Error> {
-    Ok(general_purpose::STANDARD_NO_PAD.encode(postcard::to_stdvec(&key)?))
+    Ok(format!(
+        "{:x}",
+        Sha512::new()
+            .chain_update(postcard::to_stdvec(&key)?)
+            .finalize()
+    ))
 }
