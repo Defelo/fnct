@@ -40,6 +40,16 @@ where
     S: Formatter,
     S::Serialized: FromRedisValue + ToRedisArgs,
 {
+    /// Create a new cache that uses a different formatter.
+    pub fn with_formatter<T>(&self, formatter: T) -> AsyncRedisCache<C, T> {
+        AsyncRedisCache {
+            conn: self.conn.clone(),
+            namespace: self.namespace.clone(),
+            default_ttl: self.default_ttl,
+            formatter,
+        }
+    }
+
     /// Create a new [`AsyncRedisCache`].
     pub fn new(conn: C, namespace: String, default_ttl: Duration, formatter: S) -> Self {
         Self {

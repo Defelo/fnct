@@ -290,6 +290,14 @@ macro_rules! tests {
                 assert_eq!(cache.get::<i32, _>("baz").await.unwrap(), None);
             }
 
+            #[tokio::test]
+            async fn test_to_json() {
+                let cache: AsyncRedisCache<MultiplexedConnection, $formatter> =
+                    get_cache("test_to_json").await;
+                let _: AsyncRedisCache<MultiplexedConnection, JsonFormatter> =
+                    cache.with_formatter(JsonFormatter);
+            }
+
             async fn get_cache(
                 namespace: &str,
             ) -> AsyncRedisCache<MultiplexedConnection, $formatter> {
