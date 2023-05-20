@@ -1,6 +1,7 @@
 //! Async cache backed by redis.
 
 use std::{
+    fmt::Debug,
     future::Future,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -9,35 +10,43 @@ use redis::{AsyncCommands, FromRedisValue, RedisError, RedisResult, ToRedisArgs}
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
-use crate::make_key;
+use crate::{format::Formatter, make_key};
 
 /// Async cache backed by redis.
 #[derive(Clone)]
-pub struct AsyncRedisCache<C> {
+pub struct AsyncRedisCache<C, S> {
     conn: C,
     namespace: String,
     default_ttl: Duration,
+    formatter: S,
 }
 
-impl<C> std::fmt::Debug for AsyncRedisCache<C> {
+impl<C, S> std::fmt::Debug for AsyncRedisCache<C, S>
+where
+    S: Debug,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AsyncRedisCache")
             .field("namespace", &self.namespace)
             .field("default_ttl", &self.default_ttl)
+            .field("formatter", &self.formatter)
             .finish_non_exhaustive()
     }
 }
 
-impl<C> AsyncRedisCache<C>
+impl<C, S> AsyncRedisCache<C, S>
 where
     C: AsyncCommands + Clone,
+    S: Formatter,
+    S::Serialized: FromRedisValue + ToRedisArgs,
 {
     /// Create a new [`AsyncRedisCache`].
-    pub fn new(conn: C, namespace: String, default_ttl: Duration) -> Self {
+    pub fn new(conn: C, namespace: String, default_ttl: Duration, formatter: S) -> Self {
         Self {
             conn,
             namespace,
             default_ttl,
+            formatter,
         }
     }
 
@@ -50,7 +59,7 @@ where
         tags: &[&str],
         ttl: Option<Duration>,
         func: F,
-    ) -> Result<T, AsyncRedisCacheError>
+    ) -> Result<T, AsyncRedisCacheError<S::Error>>
     where
         F: Future<Output = T>,
         T: Serialize + DeserializeOwned,
@@ -63,6 +72,7 @@ where
             tags,
             ttl.unwrap_or(self.default_ttl),
             func,
+            &self.formatter,
         )
         .await
     }
@@ -76,7 +86,7 @@ where
         tags: &[&str],
         ttl: Option<Duration>,
         func: F,
-    ) -> Result<Option<T>, AsyncRedisCacheError>
+    ) -> Result<Option<T>, AsyncRedisCacheError<S::Error>>
     where
         F: Future<Output = Option<T>>,
         T: Serialize + DeserializeOwned,
@@ -89,6 +99,7 @@ where
             tags,
             ttl.unwrap_or(self.default_ttl),
             func,
+            &self.formatter,
         )
         .await
     }
@@ -103,7 +114,7 @@ where
         tags: &[&str],
         ttl: Option<Duration>,
         func: F,
-    ) -> Result<Result<T, E>, AsyncRedisCacheError>
+    ) -> Result<Result<T, E>, AsyncRedisCacheError<S::Error>>
     where
         F: Future<Output = Result<T, E>>,
         T: Serialize + DeserializeOwned,
@@ -116,20 +127,21 @@ where
             tags,
             ttl.unwrap_or(self.default_ttl),
             func,
+            &self.formatter,
         )
         .await
     }
 
     /// Get a specific cache entry by its key.
-    pub async fn get<T, K>(&self, key: K) -> Result<Option<T>, AsyncRedisCacheError>
+    pub async fn get<T, K>(&self, key: K) -> Result<Option<T>, AsyncRedisCacheError<S::Error>>
     where
         T: Serialize + DeserializeOwned,
         K: Serialize,
     {
-        match get::<Vec<u8>>(&mut self.conn.clone(), &self.namespace, &make_key(key)?).await? {
-            Some(serialized) => Ok(Some(postcard::from_bytes(&serialized)?)),
-            None => Ok(None),
-        }
+        get(&mut self.conn.clone(), &self.namespace, &make_key(key)?)
+            .await?
+            .map(|serialized| self.deserialize(&serialized))
+            .transpose()
     }
 
     /// Insert a new or update an existing cache entry.
@@ -139,17 +151,16 @@ where
         value: T,
         tags: &[&str],
         ttl: Option<Duration>,
-    ) -> Result<(), AsyncRedisCacheError>
+    ) -> Result<(), AsyncRedisCacheError<S::Error>>
     where
         T: Serialize + DeserializeOwned,
         K: Serialize,
     {
-        let serialized = postcard::to_stdvec(&value)?;
         Ok(put(
             &mut self.conn.clone(),
             &self.namespace,
             &make_key(key)?,
-            &serialized,
+            &self.serialize(&value)?,
             tags,
             ttl.unwrap_or(self.default_ttl),
         )
@@ -173,76 +184,117 @@ where
     pub async fn pop_tags(&self, tags: &[&str]) -> Result<(), AsyncRedisCacheError> {
         Ok(pop_tags(&mut self.conn.clone(), &self.namespace, tags).await?)
     }
+
+    fn serialize<T: Serialize>(
+        &self,
+        value: &T,
+    ) -> Result<S::Serialized, AsyncRedisCacheError<S::Error>> {
+        self.formatter
+            .serialize(value)
+            .map_err(AsyncRedisCacheError::CacheFormatError)
+    }
+
+    fn deserialize<T: DeserializeOwned>(
+        &self,
+        value: &S::Serialized,
+    ) -> Result<T, AsyncRedisCacheError<S::Error>> {
+        self.formatter
+            .deserialize(value)
+            .map_err(AsyncRedisCacheError::CacheFormatError)
+    }
 }
 
 /// Wrap a function to add a caching layer using the functions in this module.
-pub async fn cached<T, K, F>(
+pub async fn cached<T, K, F, S>(
     redis: &mut impl AsyncCommands,
     namespace: &str,
     key: K,
     tags: &[&str],
     ttl: Duration,
     func: F,
-) -> Result<T, AsyncRedisCacheError>
+    formatter: &S,
+) -> Result<T, AsyncRedisCacheError<S::Error>>
 where
     F: Future<Output = T>,
     T: Serialize + DeserializeOwned,
     K: Serialize,
+    S: Formatter,
+    S::Serialized: FromRedisValue + ToRedisArgs,
 {
     let key = make_key(key)?;
-    if let Some(value) = get::<Vec<u8>>(redis, namespace, &key).await? {
-        return Ok(postcard::from_bytes(&value)?);
+    if let Some(value) = get(redis, namespace, &key).await? {
+        return formatter
+            .deserialize(&value)
+            .map_err(AsyncRedisCacheError::CacheFormatError);
     }
     let value = func.await;
-    let serialized = postcard::to_stdvec(&value)?;
+    let serialized = formatter
+        .serialize(&value)
+        .map_err(AsyncRedisCacheError::CacheFormatError)?;
     put(redis, namespace, &key, &serialized, tags, ttl).await?;
     Ok(value)
 }
 
 /// Wrap a function to add a caching layer using the functions in this module.
 /// Cache [`Option::Some`] variants only.
-pub async fn cached_option<T, K, F>(
+pub async fn cached_option<T, K, F, S>(
     redis: &mut impl AsyncCommands,
     namespace: &str,
     key: K,
     tags: &[&str],
     ttl: Duration,
     func: F,
-) -> Result<Option<T>, AsyncRedisCacheError>
+    formatter: &S,
+) -> Result<Option<T>, AsyncRedisCacheError<S::Error>>
 where
     F: Future<Output = Option<T>>,
     T: Serialize + DeserializeOwned,
     K: Serialize,
+    S: Formatter,
+    S::Serialized: FromRedisValue + ToRedisArgs,
 {
-    Ok(cached_result(redis, namespace, key, tags, ttl, async {
-        func.await.ok_or(())
-    })
+    Ok(cached_result(
+        redis,
+        namespace,
+        key,
+        tags,
+        ttl,
+        async { func.await.ok_or(()) },
+        formatter,
+    )
     .await?
     .ok())
 }
 
 /// Wrap a function to add a caching layer using the functions in this module.
 /// Cache [`Result::Ok`] variants only.
-pub async fn cached_result<T, E, K, F>(
+pub async fn cached_result<T, E, K, F, S>(
     redis: &mut impl AsyncCommands,
     namespace: &str,
     key: K,
     tags: &[&str],
     ttl: Duration,
     func: F,
-) -> Result<Result<T, E>, AsyncRedisCacheError>
+    formatter: &S,
+) -> Result<Result<T, E>, AsyncRedisCacheError<S::Error>>
 where
     F: Future<Output = Result<T, E>>,
     T: Serialize + DeserializeOwned,
     K: Serialize,
+    S: Formatter,
+    S::Serialized: FromRedisValue + ToRedisArgs,
 {
     let key = make_key(key)?;
-    if let Some(value) = get::<Vec<u8>>(redis, namespace, &key).await? {
-        return Ok(Ok(postcard::from_bytes(&value)?));
+    if let Some(value) = get(redis, namespace, &key).await? {
+        return Ok(Ok(formatter
+            .deserialize(&value)
+            .map_err(AsyncRedisCacheError::CacheFormatError)?));
     }
     match func.await {
         Ok(value) => {
-            let serialized = postcard::to_stdvec(&value)?;
+            let serialized = formatter
+                .serialize(&value)
+                .map_err(AsyncRedisCacheError::CacheFormatError)?;
             put(redis, namespace, &key, &serialized, tags, ttl).await?;
             Ok(Ok(value))
         }
@@ -340,9 +392,11 @@ pub async fn pop_tags(
 
 #[allow(missing_docs)]
 #[derive(Debug, Error)]
-pub enum AsyncRedisCacheError {
+pub enum AsyncRedisCacheError<E = ()> {
     #[error("redis error: {0}")]
     RedisError(#[from] RedisError),
     #[error("postcard error: {0}")]
     PostcardError(#[from] postcard::Error),
+    #[error("cache format error: {0}")]
+    CacheFormatError(E),
 }

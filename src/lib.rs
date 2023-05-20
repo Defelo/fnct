@@ -4,11 +4,11 @@
 //! ```no_run
 //! use std::time::Duration;
 //!
-//! use fnct::async_redis::AsyncRedisCache;
+//! use fnct::{async_redis::AsyncRedisCache, format::PostcardFormatter};
 //! use redis::{aio::MultiplexedConnection, Client};
 //!
 //! struct Application {
-//!     cache: AsyncRedisCache<MultiplexedConnection>,
+//!     cache: AsyncRedisCache<MultiplexedConnection, PostcardFormatter>,
 //! }
 //!
 //! impl Application {
@@ -26,7 +26,12 @@
 //! let client = Client::open("redis://localhost:6379/0").unwrap();
 //! let conn = client.get_multiplexed_async_connection().await.unwrap();
 //! let app = Application {
-//!     cache: AsyncRedisCache::new(conn, "my_application".to_owned(), Duration::from_secs(600)),
+//!     cache: AsyncRedisCache::new(
+//!         conn,
+//!         "my_application".to_owned(),
+//!         Duration::from_secs(600),
+//!         PostcardFormatter,
+//!     ),
 //! };
 //! assert_eq!(app.cached_function(1, 2).await, 3); // run expensive computation and fill cache
 //! assert_eq!(app.cached_function(1, 2).await, 3); // load result from cache
@@ -38,11 +43,13 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::dbg_macro, clippy::use_debug)]
 #![warn(missing_docs, missing_debug_implementations)]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use serde::Serialize;
 use sha2::{Digest, Sha512};
 
 pub mod async_redis;
+pub mod format;
 
 fn make_key(key: impl Serialize) -> Result<String, postcard::Error> {
     Ok(format!(

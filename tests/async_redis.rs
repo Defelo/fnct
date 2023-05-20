@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use fnct::async_redis::AsyncRedisCache;
+use fnct::{async_redis::AsyncRedisCache, format::PostcardFormatter};
 use redis::{aio::MultiplexedConnection, Client};
 use tokio::sync::OnceCell;
 
@@ -9,7 +9,7 @@ async fn test_cached() {
     let cache = get_cache("test_cached").await;
 
     struct App {
-        cache: AsyncRedisCache<MultiplexedConnection>,
+        cache: AsyncRedisCache<MultiplexedConnection, PostcardFormatter>,
     }
 
     impl App {
@@ -42,7 +42,7 @@ async fn test_cached_option() {
     let cache = get_cache("test_cached_option").await;
 
     struct App {
-        cache: AsyncRedisCache<MultiplexedConnection>,
+        cache: AsyncRedisCache<MultiplexedConnection, PostcardFormatter>,
     }
 
     impl App {
@@ -87,7 +87,7 @@ async fn test_cached_result() {
     let cache = get_cache("test_cached_result").await;
 
     struct App {
-        cache: AsyncRedisCache<MultiplexedConnection>,
+        cache: AsyncRedisCache<MultiplexedConnection, PostcardFormatter>,
     }
 
     impl App {
@@ -282,7 +282,7 @@ async fn test_delete_by_tags_all() {
     assert_eq!(cache.get::<i32, _>("baz").await.unwrap(), None);
 }
 
-async fn get_cache(namespace: &str) -> AsyncRedisCache<MultiplexedConnection> {
+async fn get_cache(namespace: &str) -> AsyncRedisCache<MultiplexedConnection, PostcardFormatter> {
     let client =
         Client::open(std::env::var("REDIS_SERVER").unwrap_or("redis://127.0.0.1:6379/0".into()))
             .unwrap();
@@ -297,5 +297,10 @@ async fn get_cache(namespace: &str) -> AsyncRedisCache<MultiplexedConnection> {
     })
     .await;
 
-    AsyncRedisCache::new(conn, namespace.into(), Duration::from_secs(20))
+    AsyncRedisCache::new(
+        conn,
+        namespace.into(),
+        Duration::from_secs(20),
+        PostcardFormatter,
+    )
 }

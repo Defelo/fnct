@@ -8,12 +8,21 @@ repository = "https://github.com/Defelo/fnct"
 edition = "2021"
 rust-version = "1.63.0"
 
+[features]
+default = []
+serde_json = ["dep:serde_json"]
+
 [dependencies]
 postcard = { version = "1.0.4", default-features = false, features = ["use-std"] }
 redis = { version = "0.23.0", default-features = false, features = ["tokio-comp"] }
 serde = { version = "1.0.158", default-features = false }
+serde_json = { version = "1.0.96", default-features = false, optional = true, features = ["std"] }
 sha2 = { version = "0.10.6", default-features = false }
 thiserror = { version = "1.0.40", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1.26.0", default-features = false, features = ["macros", "rt-multi-thread", "time", "parking_lot"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
