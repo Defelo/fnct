@@ -17,6 +17,7 @@ use crate::{format::Formatter, make_key};
 pub struct AsyncRedisCache<C, S> {
     conn: C,
     namespace: String,
+    orig_namespace: String,
     default_ttl: Duration,
     formatter: S,
 }
@@ -40,22 +41,24 @@ where
     S: Formatter,
     S::Serialized: FromRedisValue + ToRedisArgs,
 {
-    /// Create a new cache that uses a different formatter.
-    pub fn with_formatter<T>(&self, formatter: T) -> AsyncRedisCache<C, T> {
-        AsyncRedisCache {
-            conn: self.conn.clone(),
-            namespace: self.namespace.clone(),
-            default_ttl: self.default_ttl,
-            formatter,
-        }
-    }
-
     /// Create a new [`AsyncRedisCache`].
     pub fn new(conn: C, namespace: String, default_ttl: Duration, formatter: S) -> Self {
         Self {
             conn,
-            namespace,
+            namespace: format!("{}:{}", namespace, S::ID),
+            orig_namespace: namespace,
             default_ttl,
+            formatter,
+        }
+    }
+
+    /// Create a new cache that uses a different formatter.
+    pub fn with_formatter<T: Formatter>(&self, formatter: T) -> AsyncRedisCache<C, T> {
+        AsyncRedisCache {
+            conn: self.conn.clone(),
+            namespace: format!("{}:{}", self.orig_namespace, T::ID),
+            orig_namespace: self.orig_namespace.clone(),
+            default_ttl: self.default_ttl,
             formatter,
         }
     }

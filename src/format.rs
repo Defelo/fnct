@@ -7,6 +7,9 @@ use serde::{de::DeserializeOwned, Serialize};
 /// A formatter that can serialize data before storing it in a cache and deserialize it after
 /// retrieving it from the cache.
 pub trait Formatter: Debug {
+    /// The unique identifier of this formatter.
+    const ID: &'static str;
+
     /// The error to return if serialization or deserialization fails.
     type Error;
     /// The type of serialized data.
@@ -23,6 +26,8 @@ pub trait Formatter: Debug {
 pub struct PostcardFormatter;
 
 impl Formatter for PostcardFormatter {
+    const ID: &'static str = "postcard";
+
     type Error = postcard::Error;
     type Serialized = Vec<u8>;
 
@@ -42,6 +47,8 @@ pub struct JsonFormatter;
 
 #[cfg(feature = "serde_json")]
 impl Formatter for JsonFormatter {
+    const ID: &'static str = "json";
+
     type Error = serde_json::Error;
     type Serialized = String;
 

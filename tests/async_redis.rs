@@ -303,7 +303,7 @@ macro_rules! tests {
             ) -> AsyncRedisCache<MultiplexedConnection, $formatter> {
                 AsyncRedisCache::new(
                     get_redis().await,
-                    format!("{}_{}", stringify!($name), namespace),
+                    namespace.into(),
                     Duration::from_secs(20),
                     Default::default(),
                 )
