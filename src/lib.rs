@@ -277,4 +277,36 @@ macro_rules! key {
     };
 }
 
+/// Create a function that generates a cache key using the [`key!`] macro. Useful if you need shared
+/// access to the same cache key.
+///
+/// #### Example
+/// ```
+/// # use fnct::keyfn;
+/// keyfn!(test1(a: i32, b: i32));
+/// keyfn!(test2(a: i32, b: i32));
+/// let k1 = test1(1, 2);
+/// let k2 = test1(1, 2);
+/// let k3 = test1(1, 3);
+/// let k4 = test2(1, 2);
+/// assert_eq!(k1, k2); // same function + same arguments      -> same key
+/// assert_ne!(k1, k3); // same function + different arguments -> different key
+/// assert_ne!(k1, k4); // different function                  -> different key
+/// ```
+///
+/// `keyfn!(pub my_cache_key(a: i32, b: i32));` expands roughly to
+/// ```ignore
+/// pub fn my_cache_key(a: i32, b: i32) -> ... {
+///     key!(a, b)
+/// }
+/// ```
+#[macro_export]
+macro_rules! keyfn {
+    ($vis:vis $name:ident($($arg:ident: $ty:ty),*$(,)?)) => {
+        $vis fn $name($($arg: $ty),*) -> (
+            &'static str, &'static str, &'static str, &'static str, u32, u32, $($ty),*
+        ) {
+            $crate::key!($($arg),*)
+        }
+    };
 }
