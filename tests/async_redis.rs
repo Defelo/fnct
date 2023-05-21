@@ -1,11 +1,13 @@
 use std::time::{Duration, Instant};
 
 use fnct::{
-    async_redis::AsyncRedisCache,
+    backend::AsyncRedisBackend,
     format::{JsonFormatter, PostcardFormatter},
 };
 use redis::{aio::MultiplexedConnection, Client};
 use tokio::sync::OnceCell;
+
+type AsyncCache<F> = fnct::AsyncCache<AsyncRedisBackend<MultiplexedConnection>, F>;
 
 macro_rules! tests {
     ($name: ident, $formatter:tt) => {
@@ -17,7 +19,7 @@ macro_rules! tests {
                 let cache = get_cache("test_cached").await;
 
                 struct App {
-                    cache: AsyncRedisCache<MultiplexedConnection, $formatter>,
+                    cache: AsyncCache<$formatter>,
                 }
 
                 impl App {
@@ -28,7 +30,6 @@ macro_rules! tests {
                                 a + b
                             })
                             .await
-                            .unwrap()
                             .unwrap()
                     }
                 }
@@ -51,7 +52,7 @@ macro_rules! tests {
                 let cache = get_cache("test_cached_option").await;
 
                 struct App {
-                    cache: AsyncRedisCache<MultiplexedConnection, $formatter>,
+                    cache: AsyncCache<$formatter>,
                 }
 
                 impl App {
@@ -66,7 +67,6 @@ macro_rules! tests {
                                 }
                             })
                             .await
-                            .unwrap()
                             .unwrap()
                     }
                 }
@@ -97,7 +97,7 @@ macro_rules! tests {
                 let cache = get_cache("test_cached_result").await;
 
                 struct App {
-                    cache: AsyncRedisCache<MultiplexedConnection, $formatter>,
+                    cache: AsyncCache<$formatter>,
                 }
 
                 impl App {
@@ -112,7 +112,6 @@ macro_rules! tests {
                                 }
                             })
                             .await
-                            .unwrap()
                             .unwrap()
                     }
                 }
@@ -149,67 +148,42 @@ macro_rules! tests {
             #[tokio::test]
             async fn test_basic_insert_expire() {
                 let cache = get_cache("test_basic_insert_expire").await;
-                assert_eq!(cache.get::<String, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<String, _>("asdf").await.unwrap().unwrap(), None);
+                assert_eq!(cache.get::<String, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get::<String, _>("asdf").await.unwrap(), None);
                 cache
                     .put("foo", "bar".to_owned(), &[], Some(Duration::from_secs(1)))
                     .await
-                    .unwrap()
                     .unwrap();
                 cache
                     .put("asdf", "baz".to_owned(), &[], Some(Duration::from_secs(2)))
                     .await
-                    .unwrap()
                     .unwrap();
-                assert_eq!(
-                    cache.get("foo").await.unwrap().unwrap(),
-                    Some("bar".to_owned())
-                );
-                assert_eq!(
-                    cache.get("asdf").await.unwrap().unwrap(),
-                    Some("baz".to_owned())
-                );
+                assert_eq!(cache.get("foo").await.unwrap(), Some("bar".to_owned()));
+                assert_eq!(cache.get("asdf").await.unwrap(), Some("baz".to_owned()));
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                assert_eq!(cache.get::<String, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(
-                    cache.get("asdf").await.unwrap().unwrap(),
-                    Some("baz".to_owned())
-                );
+                assert_eq!(cache.get::<String, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get("asdf").await.unwrap(), Some("baz".to_owned()));
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                assert_eq!(cache.get::<String, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<String, _>("asdf").await.unwrap().unwrap(), None);
+                assert_eq!(cache.get::<String, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get::<String, _>("asdf").await.unwrap(), None);
             }
 
             #[tokio::test]
             async fn test_delete_by_key() {
                 let cache = get_cache("test_delete_by_key").await;
-                cache
-                    .put("foo", "bar".to_owned(), &[], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
+                cache.put("foo", "bar".to_owned(), &[], None).await.unwrap();
                 cache
                     .put("asdf", "baz".to_owned(), &[], None)
                     .await
-                    .unwrap()
                     .unwrap();
-                assert_eq!(
-                    cache.get("foo").await.unwrap().unwrap(),
-                    Some("bar".to_owned())
-                );
-                assert_eq!(
-                    cache.get("asdf").await.unwrap().unwrap(),
-                    Some("baz".to_owned())
-                );
+                assert_eq!(cache.get("foo").await.unwrap(), Some("bar".to_owned()));
+                assert_eq!(cache.get("asdf").await.unwrap(), Some("baz".to_owned()));
                 cache.pop_key("asdf").await.unwrap();
-                assert_eq!(
-                    cache.get("foo").await.unwrap().unwrap(),
-                    Some("bar".to_owned())
-                );
-                assert_eq!(cache.get::<String, _>("asdf").await.unwrap().unwrap(), None);
+                assert_eq!(cache.get("foo").await.unwrap(), Some("bar".to_owned()));
+                assert_eq!(cache.get::<String, _>("asdf").await.unwrap(), None);
                 cache.pop_key("foo").await.unwrap();
-                assert_eq!(cache.get::<String, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<String, _>("asdf").await.unwrap().unwrap(), None);
+                assert_eq!(cache.get::<String, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get::<String, _>("asdf").await.unwrap(), None);
             }
 
             #[tokio::test]
@@ -218,52 +192,34 @@ macro_rules! tests {
                 cache
                     .put("foo", 1, &["t1", "t2", "t3"], None)
                     .await
-                    .unwrap()
                     .unwrap();
-                cache
-                    .put("bar", 2, &["t1", "t2"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                cache
-                    .put("baz", 3, &["t1", "t3"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                assert_eq!(cache.get("foo").await.unwrap().unwrap(), Some(1));
-                assert_eq!(cache.get("bar").await.unwrap().unwrap(), Some(2));
-                assert_eq!(cache.get("baz").await.unwrap().unwrap(), Some(3));
+                cache.put("bar", 2, &["t1", "t2"], None).await.unwrap();
+                cache.put("baz", 3, &["t1", "t3"], None).await.unwrap();
+                assert_eq!(cache.get("foo").await.unwrap(), Some(1));
+                assert_eq!(cache.get("bar").await.unwrap(), Some(2));
+                assert_eq!(cache.get("baz").await.unwrap(), Some(3));
                 cache.pop_tag("t3").await.unwrap();
-                assert_eq!(cache.get::<i32, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get("bar").await.unwrap().unwrap(), Some(2));
-                assert_eq!(cache.get::<i32, _>("baz").await.unwrap().unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get("bar").await.unwrap(), Some(2));
+                assert_eq!(cache.get::<i32, _>("baz").await.unwrap(), None);
                 cache.pop_tag("t2").await.unwrap();
-                assert_eq!(cache.get::<i32, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<i32, _>("bar").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<i32, _>("baz").await.unwrap().unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("bar").await.unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("baz").await.unwrap(), None);
 
                 cache
                     .put("foo", 1, &["t1", "t2", "t3"], None)
                     .await
-                    .unwrap()
                     .unwrap();
-                cache
-                    .put("bar", 2, &["t1", "t2"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                cache
-                    .put("baz", 3, &["t1", "t3"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                assert_eq!(cache.get("foo").await.unwrap().unwrap(), Some(1));
-                assert_eq!(cache.get("bar").await.unwrap().unwrap(), Some(2));
-                assert_eq!(cache.get("baz").await.unwrap().unwrap(), Some(3));
+                cache.put("bar", 2, &["t1", "t2"], None).await.unwrap();
+                cache.put("baz", 3, &["t1", "t3"], None).await.unwrap();
+                assert_eq!(cache.get("foo").await.unwrap(), Some(1));
+                assert_eq!(cache.get("bar").await.unwrap(), Some(2));
+                assert_eq!(cache.get("baz").await.unwrap(), Some(3));
                 cache.pop_tag("t1").await.unwrap();
-                assert_eq!(cache.get::<i32, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<i32, _>("bar").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<i32, _>("baz").await.unwrap().unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("bar").await.unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("baz").await.unwrap(), None);
             }
 
             #[tokio::test]
@@ -272,77 +228,50 @@ macro_rules! tests {
                 cache
                     .put("foo", 1, &["t1", "t2", "t3"], None)
                     .await
-                    .unwrap()
                     .unwrap();
-                cache
-                    .put("bar", 2, &["t1", "t2"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                cache
-                    .put("baz", 3, &["t1", "t3"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                assert_eq!(cache.get("foo").await.unwrap().unwrap(), Some(1));
-                assert_eq!(cache.get("bar").await.unwrap().unwrap(), Some(2));
-                assert_eq!(cache.get("baz").await.unwrap().unwrap(), Some(3));
+                cache.put("bar", 2, &["t1", "t2"], None).await.unwrap();
+                cache.put("baz", 3, &["t1", "t3"], None).await.unwrap();
+                assert_eq!(cache.get("foo").await.unwrap(), Some(1));
+                assert_eq!(cache.get("bar").await.unwrap(), Some(2));
+                assert_eq!(cache.get("baz").await.unwrap(), Some(3));
                 cache.pop_tags(&["t2", "t3"]).await.unwrap();
-                assert_eq!(cache.get::<i32, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get("bar").await.unwrap().unwrap(), Some(2));
-                assert_eq!(cache.get("baz").await.unwrap().unwrap(), Some(3));
+                assert_eq!(cache.get::<i32, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get("bar").await.unwrap(), Some(2));
+                assert_eq!(cache.get("baz").await.unwrap(), Some(3));
                 cache.pop_tags(&["t1", "t2"]).await.unwrap();
-                assert_eq!(cache.get::<i32, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<i32, _>("bar").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get("baz").await.unwrap().unwrap(), Some(3));
+                assert_eq!(cache.get::<i32, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("bar").await.unwrap(), None);
+                assert_eq!(cache.get("baz").await.unwrap(), Some(3));
 
                 cache
                     .put("foo", 1, &["t1", "t2", "t3"], None)
                     .await
-                    .unwrap()
                     .unwrap();
-                cache
-                    .put("bar", 2, &["t1", "t2"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                cache
-                    .put("baz", 3, &["t1", "t3"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                assert_eq!(cache.get("foo").await.unwrap().unwrap(), Some(1));
-                assert_eq!(cache.get("bar").await.unwrap().unwrap(), Some(2));
-                assert_eq!(cache.get("baz").await.unwrap().unwrap(), Some(3));
+                cache.put("bar", 2, &["t1", "t2"], None).await.unwrap();
+                cache.put("baz", 3, &["t1", "t3"], None).await.unwrap();
+                assert_eq!(cache.get("foo").await.unwrap(), Some(1));
+                assert_eq!(cache.get("bar").await.unwrap(), Some(2));
+                assert_eq!(cache.get("baz").await.unwrap(), Some(3));
                 cache.pop_tags(&["t1", "t3"]).await.unwrap();
-                assert_eq!(cache.get::<i32, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get("bar").await.unwrap().unwrap(), Some(2));
-                assert_eq!(cache.get::<i32, _>("baz").await.unwrap().unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get("bar").await.unwrap(), Some(2));
+                assert_eq!(cache.get::<i32, _>("baz").await.unwrap(), None);
 
                 cache
                     .put("foo", 1, &["t1", "t2", "t3"], None)
                     .await
-                    .unwrap()
                     .unwrap();
-                cache
-                    .put("bar", 2, &["t1", "t2"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                cache
-                    .put("baz", 3, &["t1", "t3"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                cache.put("xy", 4, &["t4"], None).await.unwrap().unwrap();
-                assert_eq!(cache.get("foo").await.unwrap().unwrap(), Some(1));
-                assert_eq!(cache.get("bar").await.unwrap().unwrap(), Some(2));
-                assert_eq!(cache.get("baz").await.unwrap().unwrap(), Some(3));
+                cache.put("bar", 2, &["t1", "t2"], None).await.unwrap();
+                cache.put("baz", 3, &["t1", "t3"], None).await.unwrap();
+                cache.put("xy", 4, &["t4"], None).await.unwrap();
+                assert_eq!(cache.get("foo").await.unwrap(), Some(1));
+                assert_eq!(cache.get("bar").await.unwrap(), Some(2));
+                assert_eq!(cache.get("baz").await.unwrap(), Some(3));
                 cache.pop_tags(&["t1"]).await.unwrap();
-                assert_eq!(cache.get::<i32, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<i32, _>("bar").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<i32, _>("baz").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get("xy").await.unwrap().unwrap(), Some(4));
+                assert_eq!(cache.get::<i32, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("bar").await.unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("baz").await.unwrap(), None);
+                assert_eq!(cache.get("xy").await.unwrap(), Some(4));
             }
 
             #[tokio::test]
@@ -351,43 +280,29 @@ macro_rules! tests {
                 cache
                     .put("foo", 1, &["t1", "t2", "t3"], None)
                     .await
-                    .unwrap()
                     .unwrap();
-                cache
-                    .put("bar", 2, &["t1", "t2"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                cache
-                    .put("baz", 3, &["t1", "t3"], None)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                assert_eq!(cache.get("foo").await.unwrap().unwrap(), Some(1));
-                assert_eq!(cache.get("bar").await.unwrap().unwrap(), Some(2));
-                assert_eq!(cache.get("baz").await.unwrap().unwrap(), Some(3));
+                cache.put("bar", 2, &["t1", "t2"], None).await.unwrap();
+                cache.put("baz", 3, &["t1", "t3"], None).await.unwrap();
+                assert_eq!(cache.get("foo").await.unwrap(), Some(1));
+                assert_eq!(cache.get("bar").await.unwrap(), Some(2));
+                assert_eq!(cache.get("baz").await.unwrap(), Some(3));
                 cache.pop_tags(&[]).await.unwrap();
-                assert_eq!(cache.get::<i32, _>("foo").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<i32, _>("bar").await.unwrap().unwrap(), None);
-                assert_eq!(cache.get::<i32, _>("baz").await.unwrap().unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("foo").await.unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("bar").await.unwrap(), None);
+                assert_eq!(cache.get::<i32, _>("baz").await.unwrap(), None);
             }
 
             #[tokio::test]
             async fn test_to_json() {
-                let cache: AsyncRedisCache<MultiplexedConnection, $formatter> =
-                    get_cache("test_to_json").await;
-                let _: AsyncRedisCache<MultiplexedConnection, JsonFormatter> =
-                    cache.with_formatter(JsonFormatter);
+                let cache: AsyncCache<$formatter> = get_cache("test_to_json").await;
+                let _: AsyncCache<JsonFormatter> = cache.with_formatter(JsonFormatter);
             }
 
-            async fn get_cache(
-                namespace: &str,
-            ) -> AsyncRedisCache<MultiplexedConnection, $formatter> {
-                AsyncRedisCache::new(
-                    get_redis().await,
-                    namespace.into(),
-                    Duration::from_secs(20),
+            async fn get_cache(namespace: &str) -> AsyncCache<$formatter> {
+                AsyncCache::new(
+                    AsyncRedisBackend::new(get_redis().await, namespace.into()),
                     Default::default(),
+                    Duration::from_secs(20),
                 )
             }
         }
