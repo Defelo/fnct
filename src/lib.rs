@@ -254,6 +254,14 @@ fn make_key<F: Formatter>(key: impl Serialize) -> Result<String, postcard::Error
 
 /// Create a cache key that includes the source location where the macro was invoked and the crate
 /// name and version.
+///
+/// #### Example
+/// ```
+/// # use fnct::key;
+/// let k1 = key!();
+/// let k2 = key!();
+/// assert_ne!(k1, k2); // each invocation yields a different key
+/// ```
 #[macro_export]
 macro_rules! key {
     ($($x:expr),*$(,)?) => {
@@ -269,14 +277,4 @@ macro_rules! key {
     };
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_key_macro() {
-        let k1 = key!();
-        let k2 = key!();
-        assert_ne!(k1, k2);
-    }
 }
