@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use fnct::{
     backend::AsyncRedisBackend,
     format::{JsonFormatter, PostcardFormatter},
+    key,
 };
 use redis::{aio::MultiplexedConnection, Client};
 use tokio::sync::OnceCell;
@@ -25,7 +26,7 @@ macro_rules! tests {
                 impl App {
                     async fn expensive_computation(&self, a: i32, b: i32) -> i32 {
                         self.cache
-                            .cached((a, b), &[], None, async {
+                            .cached(key!(a, b), &[], None, async {
                                 tokio::time::sleep(Duration::from_secs(3)).await;
                                 a + b
                             })

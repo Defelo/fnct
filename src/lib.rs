@@ -4,7 +4,7 @@
 //! ```no_run
 //! use std::time::Duration;
 //!
-//! use fnct::{backend::AsyncRedisBackend, format::PostcardFormatter, AsyncCache};
+//! use fnct::{backend::AsyncRedisBackend, format::PostcardFormatter, key, AsyncCache};
 //! use redis::{aio::MultiplexedConnection, Client};
 //!
 //! struct Application {
@@ -14,7 +14,7 @@
 //! impl Application {
 //!     async fn cached_function(&self, a: i32, b: i32) -> i32 {
 //!         self.cache
-//!             .cached((a, b), &["sum"], None, async move {
+//!             .cached(key!(a, b), &["sum"], None, async move {
 //!                 // expensive computation
 //!                 a + b
 //!             })
@@ -250,4 +250,18 @@ fn make_key<F: Formatter>(key: impl Serialize) -> Result<String, postcard::Error
             .finalize(),
         F::ID
     ))
+}
+
+/// Create a cache key that includes the source location where the macro was invoked.
+#[macro_export]
+macro_rules! key {
+    ($($x:expr),*$(,)?) => {
+        (
+            ::std::module_path!(),
+            ::std::file!(),
+            ::std::line!(),
+            ::std::column!(),
+            $($x),*
+        )
+    };
 }
