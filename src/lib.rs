@@ -252,11 +252,14 @@ fn make_key<F: Formatter>(key: impl Serialize) -> Result<String, postcard::Error
     ))
 }
 
-/// Create a cache key that includes the source location where the macro was invoked.
+/// Create a cache key that includes the source location where the macro was invoked and the crate
+/// name and version.
 #[macro_export]
 macro_rules! key {
     ($($x:expr),*$(,)?) => {
         (
+            ::std::env!("CARGO_PKG_NAME"),
+            ::std::env!("CARGO_PKG_VERSION"),
             ::std::module_path!(),
             ::std::file!(),
             ::std::line!(),
