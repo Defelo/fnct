@@ -268,3 +268,15 @@ macro_rules! key {
         )
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_key_macro() {
+        let k1 = key!();
+        let k2 = key!();
+        assert_ne!(k1, k2);
+    }
+}
