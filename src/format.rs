@@ -11,7 +11,7 @@ pub trait Formatter: Debug {
     const ID: &'static str;
 
     /// The error to return if serialization or deserialization fails.
-    type Error;
+    type Error: std::error::Error;
     /// The type of serialized data.
     type Serialized;
 
