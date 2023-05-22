@@ -1,51 +1,10 @@
-//! Simple caching library that supports cache invalidation via tags.
-//!
-//! #### Example
-//! ```no_run
-//! use std::time::Duration;
-//!
-//! use fnct::{backend::AsyncRedisBackend, format::PostcardFormatter, key, AsyncCache};
-//! use redis::{aio::MultiplexedConnection, Client};
-//!
-//! struct Application {
-//!     cache: AsyncCache<AsyncRedisBackend<MultiplexedConnection>, PostcardFormatter>,
-//! }
-//!
-//! impl Application {
-//!     async fn cached_function(&self, a: i32, b: i32) -> i32 {
-//!         self.cache
-//!             .cached(key!(a, b), &["sum"], None, async move {
-//!                 // expensive computation
-//!                 a + b
-//!             })
-//!             .await
-//!             .unwrap()
-//!     }
-//! }
-//!
-//! # async {
-//! let client = Client::open("redis://localhost:6379/0").unwrap();
-//! let conn = client.get_multiplexed_async_connection().await.unwrap();
-//! let app = Application {
-//!     cache: AsyncCache::new(
-//!         AsyncRedisBackend::new(conn, "my_application".to_owned()),
-//!         PostcardFormatter,
-//!         Duration::from_secs(600),
-//!     ),
-//! };
-//! assert_eq!(app.cached_function(1, 2).await, 3); // run expensive computation and fill cache
-//! assert_eq!(app.cached_function(1, 2).await, 3); // load result from cache
-//! app.cache.pop_key((1, 2)).await.unwrap(); // invalidate cache by key
-//! app.cache.pop_tag("sum").await.unwrap(); // invalidate cache by tag
-//! # };
-//! ```
-
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 #![warn(clippy::dbg_macro, clippy::use_debug)]
 #![warn(missing_docs, missing_debug_implementations)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-use std::{future::Future, time::Duration};
+use std::{convert::identity, future::Future, time::Duration};
 
 use backend::AsyncBackend;
 use format::Formatter;
@@ -61,6 +20,45 @@ pub mod backend;
 pub mod format;
 
 /// A cache that can be used asynchronously.
+///
+/// #### Example
+/// ```
+/// # use fnct::{AsyncCache, backend::AsyncRedisBackend, format::PostcardFormatter};
+/// # use redis::{Client, aio::MultiplexedConnection};
+/// # use std::time::Duration;
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # if let Ok(REDIS_SERVER) = std::env::var("REDIS_SERVER") {
+/// # let client = Client::open(REDIS_SERVER)?;
+/// # let conn = client.get_multiplexed_async_connection().await?;
+/// # let backend = AsyncRedisBackend::new(conn, "test".to_owned());
+/// # let formatter = PostcardFormatter;
+/// let cache = AsyncCache::new(backend, formatter, Duration::from_secs(10));
+///
+/// assert!(cache.get::<i32, _>("foo").await?.is_none()); // cache is empty initially
+/// cache
+///     .put("foo", 42, &[], Some(Duration::from_secs(1)))
+///     .await?; // store a value in the cache
+/// assert_eq!(cache.get::<i32, _>("foo").await?.unwrap(), 42); // retrieve the value
+/// tokio::time::sleep(Duration::from_secs(1)).await; // wait 1 second
+/// assert!(cache.get::<i32, _>("foo").await?.is_none()); // the value expired
+///
+/// cache.put("foo", 1337, &["my_tag"], None).await?; // store value with a tag
+/// assert_eq!(cache.get::<i32, _>("foo").await?.unwrap(), 1337); // retrieve the value
+/// cache.pop_tag("my_tag").await?; // delete value by tag
+/// assert!(cache.get::<i32, _>("foo").await?.is_none());
+///
+/// cache.put("foo", 42, &["1", "2", "3"], None).await?; // store values with different tags
+/// cache.put("bar", 1337, &["1", "2", "4"], None).await?;
+/// assert_eq!(cache.get::<i32, _>("foo").await?.unwrap(), 42);
+/// assert_eq!(cache.get::<i32, _>("bar").await?.unwrap(), 1337);
+/// cache.pop_tags(&["2", "3"]).await?; // delete values tagged with both "2" and "3"
+/// assert!(cache.get::<i32, _>("foo").await?.is_none()); // deleted (was tagged with "2" and "3")
+/// assert_eq!(cache.get::<i32, _>("bar").await?.unwrap(), 1337); // kept (not tagged with "3")
+/// # }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct AsyncCache<B, S> {
     backend: B,
@@ -74,6 +72,18 @@ where
     S: Formatter,
 {
     /// Create a new [`AsyncCache`].
+    ///
+    /// #### Example
+    /// ```no_run
+    /// # use fnct::{AsyncCache, backend::AsyncRedisBackend, format::PostcardFormatter};
+    /// # use std::time::Duration;
+    /// # let conn: redis::aio::MultiplexedConnection = todo!();
+    /// let cache = AsyncCache::new(
+    ///     AsyncRedisBackend::new(conn, "my_namespace".into()),
+    ///     PostcardFormatter,
+    ///     Duration::from_secs(600),
+    /// );
+    /// ```
     pub fn new(backend: B, formatter: S, default_ttl: Duration) -> Self {
         Self {
             backend,
@@ -83,6 +93,15 @@ where
     }
 
     /// Create a new cache that uses a different formatter.
+    ///
+    /// #### Example
+    /// ```no_run
+    /// # use fnct::{backend::AsyncRedisBackend, AsyncCache, format::{PostcardFormatter, JsonFormatter}};
+    /// # use redis::aio::MultiplexedConnection;
+    /// type MyCache<F> = AsyncCache<AsyncRedisBackend<MultiplexedConnection>, F>;
+    /// let postcard_cache: MyCache<PostcardFormatter> = todo!();
+    /// let json_cache: MyCache<JsonFormatter> = postcard_cache.with_formatter(JsonFormatter);
+    /// ```
     pub fn with_formatter<T: Formatter>(&self, formatter: T) -> AsyncCache<B, T>
     where
         B: Clone,
@@ -95,68 +114,178 @@ where
     }
 
     /// Wrap a function to add a caching layer.
+    ///
+    /// #### Example
+    /// ```no_run
+    /// # use fnct::{backend::AsyncRedisBackend, format::PostcardFormatter, AsyncCache};
+    /// # use redis::aio::MultiplexedConnection;
+    /// let cache: AsyncCache<AsyncRedisBackend<MultiplexedConnection>, PostcardFormatter> = todo!();
+    /// # async {
+    /// let result = cache
+    ///     .cached("my_cache_key", &["tag1", "tag2"], None, || async {
+    ///         (1..=1000000).sum::<u64>()
+    ///     })
+    ///     .await
+    ///     .unwrap();
+    /// assert_eq!(result, 500000500000);
+    /// # };
+    /// ```
     pub async fn cached<T, K, F>(
         &self,
         key: K,
         tags: &[&str],
         ttl: Option<Duration>,
-        func: F,
+        func: impl FnOnce() -> F,
     ) -> Result<T, Error<B, S>>
     where
         F: Future<Output = T>,
         T: Serialize + DeserializeOwned,
         K: Serialize,
     {
-        if let Some(value) = self.get(&key).await? {
-            return Ok(value);
-        }
-        let value = func.await;
-        self.put(&key, &value, tags, ttl).await?;
-        Ok(value)
+        self.cached_filter_map(key, tags, ttl, func, |x| Some(x), identity)
+            .await
     }
 
     /// Wrap a function to add a caching layer.
     /// Cache [`Option::Some`] variants only.
+    ///
+    /// #### Example
+    /// ```no_run
+    /// # use fnct::{backend::AsyncRedisBackend, format::PostcardFormatter, AsyncCache};
+    /// # use redis::aio::MultiplexedConnection;
+    /// let cache: AsyncCache<AsyncRedisBackend<MultiplexedConnection>, PostcardFormatter> = todo!();
+    /// # async {
+    /// let result = cache
+    ///     .cached_option("my_cache_key", &["tag1", "tag2"], None, || async {
+    ///         if todo!() {
+    ///             Some((1..=1000000).sum::<u64>()) // cached
+    ///         } else {
+    ///             None // not cached
+    ///         }
+    ///     })
+    ///     .await
+    ///     .unwrap();
+    /// assert_eq!(result, Some(500000500000));
+    /// # };
+    /// ```
     pub async fn cached_option<T, K, F>(
         &self,
         key: K,
         tags: &[&str],
         ttl: Option<Duration>,
-        func: F,
+        func: impl FnOnce() -> F,
     ) -> Result<Option<T>, Error<B, S>>
     where
         F: Future<Output = Option<T>>,
         T: Serialize + DeserializeOwned,
         K: Serialize,
     {
-        self.cached_result(key, tags, ttl, async { func.await.ok_or(()) })
+        self.cached_filter_map(key, tags, ttl, func, Option::as_ref, Some)
             .await
-            .map(Result::ok)
     }
 
     /// Wrap a function to add a caching layer.
     /// Cache [`Result::Ok`] variants only.
+    ///
+    /// #### Example
+    /// ```no_run
+    /// # use fnct::{backend::AsyncRedisBackend, format::PostcardFormatter, AsyncCache};
+    /// # use redis::aio::MultiplexedConnection;
+    /// let cache: AsyncCache<AsyncRedisBackend<MultiplexedConnection>, PostcardFormatter> = todo!();
+    /// # async {
+    /// let result = cache
+    ///     .cached_result("my_cache_key", &["tag1", "tag2"], None, || async {
+    ///         if todo!() {
+    ///             Ok((1..=1000000).sum::<u64>()) // cached
+    ///         } else {
+    ///             Err("test") // not cached
+    ///         }
+    ///     })
+    ///     .await
+    ///     .unwrap();
+    /// assert_eq!(result, Ok(500000500000));
+    /// # };
+    /// ```
     pub async fn cached_result<T, E, K, F>(
         &self,
         key: K,
         tags: &[&str],
         ttl: Option<Duration>,
-        func: F,
+        func: impl FnOnce() -> F,
     ) -> Result<Result<T, E>, Error<B, S>>
     where
         F: Future<Output = Result<T, E>>,
         T: Serialize + DeserializeOwned,
         K: Serialize,
     {
-        if let Some(value) = self.get(&key).await? {
-            return Ok(Ok(value));
+        self.cached_filter_map(key, tags, ttl, func, |x| x.as_ref().ok(), Ok)
+            .await
+    }
+
+    /// Wrap a function to add a caching layer.
+    /// Use a closure to determine if and what to cache.
+    ///
+    /// #### Example
+    /// ```no_run
+    /// # use fnct::{backend::AsyncRedisBackend, format::PostcardFormatter, AsyncCache};
+    /// # use redis::aio::MultiplexedConnection;
+    /// enum Test {
+    ///     Foo(i32),
+    ///     Bar(i32),
+    /// }
+    ///
+    /// type Cache = AsyncCache<AsyncRedisBackend<MultiplexedConnection>, PostcardFormatter>;
+    /// async fn test(cache: &Cache, x: i32) -> Test {
+    ///     cache
+    ///         .cached_filter_map(
+    ///             "my_cache_key",
+    ///             &["tag1", "tag2"],
+    ///             None,
+    ///             || async {
+    ///                 if x > 100 {
+    ///                     Test::Foo((1..=x).sum::<i32>()) // cached
+    ///                 } else {
+    ///                     Test::Bar(x) // not cached
+    ///                 }
+    ///             },
+    ///             |return_value| match return_value {
+    ///                 Test::Foo(x) => Some(x),
+    ///                 _ => None,
+    ///             },
+    ///             |cache_value| Test::Foo(cache_value),
+    ///         )
+    ///         .await
+    ///         .unwrap()
+    /// }
+    ///
+    /// # async {
+    /// let cache = todo!();
+    /// assert!(matches!(test(&cache, 1000).await, Test::Foo(500500)));
+    /// assert!(matches!(test(&cache, 42).await, Test::Bar(42)));
+    /// # };
+    /// ```
+    pub async fn cached_filter_map<T, R, K, F>(
+        &self,
+        key: K,
+        tags: &[&str],
+        ttl: Option<Duration>,
+        func: impl FnOnce() -> F,
+        to_cache: impl FnOnce(&T) -> Option<&R>,
+        from_cache: impl FnOnce(R) -> T,
+    ) -> Result<T, Error<B, S>>
+    where
+        F: Future<Output = T>,
+        R: Serialize + DeserializeOwned,
+        K: Serialize,
+    {
+        if let Some(value) = self.get(&key).await?.map(from_cache) {
+            return Ok(value);
         }
-        let value = match func.await {
-            Ok(x) => x,
-            Err(err) => return Ok(Err(err)),
-        };
-        self.put(&key, &value, tags, ttl).await?;
-        Ok(Ok(value))
+        let value = func().await;
+        if let Some(cache_value) = to_cache(&value) {
+            self.put(&key, cache_value, tags, ttl).await?;
+        }
+        Ok(value)
     }
 
     /// Get a specific cache entry by its key.
@@ -175,6 +304,10 @@ where
     }
 
     /// Insert a new or update an existing cache entry.
+    ///
+    /// The value is automatically invalidated after the given `ttl` has elapsed. It can also be
+    /// invalidated manually by using one of the [`pop_key`](Self::pop_key),
+    /// [`pop_tag`](Self::pop_tag) or [`pop_tags`](Self::pop_tags) functions.
     pub async fn put<T, K>(
         &self,
         key: K,
@@ -219,6 +352,8 @@ where
     }
 
     /// Invalidate all cache entries that are associated with ALL of the given tags.
+    ///
+    /// If `tags` is empty, all cached values (in the given namespace) are invalidated.
     pub async fn pop_tags(&self, tags: &[&str]) -> Result<(), Error<B, S>> {
         self.backend
             .pop_tags(tags)

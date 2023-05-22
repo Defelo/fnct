@@ -26,7 +26,7 @@ macro_rules! tests {
                 impl App {
                     async fn expensive_computation(&self, a: i32, b: i32) -> i32 {
                         self.cache
-                            .cached(key!(a, b), &[], None, async {
+                            .cached(key!(a, b), &[], None, || async {
                                 tokio::time::sleep(Duration::from_secs(3)).await;
                                 a + b
                             })
@@ -59,7 +59,7 @@ macro_rules! tests {
                 impl App {
                     async fn expensive_computation(&self, a: i32, b: i32) -> Option<i32> {
                         self.cache
-                            .cached_option((a, b), &[], None, async {
+                            .cached_option((a, b), &[], None, || async {
                                 tokio::time::sleep(Duration::from_secs(2)).await;
                                 if a > 0 {
                                     Some(a + b)
@@ -104,7 +104,7 @@ macro_rules! tests {
                 impl App {
                     async fn expensive_computation(&self, a: i32, b: i32) -> Result<i32, bool> {
                         self.cache
-                            .cached_result((a, b), &[], None, async {
+                            .cached_result((a, b), &[], None, || async {
                                 tokio::time::sleep(Duration::from_secs(2)).await;
                                 if a > 0 {
                                     Ok(a + b)
