@@ -49,7 +49,7 @@
 #![warn(missing_docs, missing_debug_implementations)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-use std::{future::Future, time::Duration};
+use std::{convert::identity, future::Future, time::Duration};
 
 use backend::AsyncBackend;
 use format::Formatter;
@@ -187,12 +187,8 @@ where
         T: Serialize + DeserializeOwned,
         K: Serialize,
     {
-        if let Some(value) = self.get(&key).await? {
-            return Ok(value);
-        }
-        let value = func().await;
-        self.put(&key, &value, tags, ttl).await?;
-        Ok(value)
+        self.cached_filter_map(key, tags, ttl, func, |x| Some(x), identity)
+            .await
     }
 
     /// Wrap a function to add a caching layer.
@@ -229,9 +225,8 @@ where
         T: Serialize + DeserializeOwned,
         K: Serialize,
     {
-        self.cached_result(key, tags, ttl, || async { func().await.ok_or(()) })
+        self.cached_filter_map(key, tags, ttl, func, Option::as_ref, Some)
             .await
-            .map(Result::ok)
     }
 
     /// Wrap a function to add a caching layer.
@@ -268,15 +263,74 @@ where
         T: Serialize + DeserializeOwned,
         K: Serialize,
     {
-        if let Some(value) = self.get(&key).await? {
-            return Ok(Ok(value));
+        self.cached_filter_map(key, tags, ttl, func, |x| x.as_ref().ok(), Ok)
+            .await
+    }
+
+    /// Wrap a function to add a caching layer.
+    /// Use a closure to determine if and what to cache.
+    ///
+    /// #### Example
+    /// ```no_run
+    /// # use fnct::{backend::AsyncRedisBackend, format::PostcardFormatter, AsyncCache};
+    /// # use redis::aio::MultiplexedConnection;
+    /// enum Test {
+    ///     Foo(i32),
+    ///     Bar(i32),
+    /// }
+    ///
+    /// type Cache = AsyncCache<AsyncRedisBackend<MultiplexedConnection>, PostcardFormatter>;
+    /// async fn test(cache: &Cache, x: i32) -> Test {
+    ///     cache
+    ///         .cached_filter_map(
+    ///             "my_cache_key",
+    ///             &["tag1", "tag2"],
+    ///             None,
+    ///             || async {
+    ///                 if x > 100 {
+    ///                     Test::Foo((1..=x).sum::<i32>()) // cached
+    ///                 } else {
+    ///                     Test::Bar(x) // not cached
+    ///                 }
+    ///             },
+    ///             |return_value| match return_value {
+    ///                 Test::Foo(x) => Some(x),
+    ///                 _ => None,
+    ///             },
+    ///             |cache_value| Test::Foo(cache_value),
+    ///         )
+    ///         .await
+    ///         .unwrap()
+    /// }
+    ///
+    /// # async {
+    /// let cache = todo!();
+    /// assert!(matches!(test(&cache, 1000).await, Test::Foo(500500)));
+    /// assert!(matches!(test(&cache, 42).await, Test::Bar(42)));
+    /// # };
+    /// ```
+    pub async fn cached_filter_map<T, R, K, F>(
+        &self,
+        key: K,
+        tags: &[&str],
+        ttl: Option<Duration>,
+        func: impl FnOnce() -> F,
+        to_cache: impl FnOnce(&T) -> Option<&R>,
+        from_cache: impl FnOnce(R) -> T,
+    ) -> Result<T, Error<B, S>>
+    where
+        F: Future<Output = T>,
+        R: Serialize + DeserializeOwned,
+        K: Serialize,
+    {
+        if let Some(value) = self.get(&key).await?.map(from_cache) {
+            return Ok(value);
         }
-        let value = match func().await {
-            Ok(x) => x,
-            Err(err) => return Ok(Err(err)),
-        };
-        self.put(&key, &value, tags, ttl).await?;
-        Ok(Ok(value))
+        let value = func().await;
+        if let Some(cache_value) = to_cache(&value) {
+            self.put(&key, cache_value, tags, ttl).await?;
+        }
+        Ok(value)
     }
 
     /// Get a specific cache entry by its key.
