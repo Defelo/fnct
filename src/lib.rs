@@ -15,7 +15,7 @@
 //! impl Application {
 //!     async fn test(&self, a: i32, b: i32) -> i32 {
 //!         self.cache
-//!             .cached(my_cache_key(a, b), &["sum"], None, async {
+//!             .cached(my_cache_key(a, b), &["sum"], None, || async {
 //!                 // expensive computation
 //!                 a + b
 //!             })
@@ -167,7 +167,7 @@ where
     /// let cache: AsyncCache<AsyncRedisBackend<MultiplexedConnection>, PostcardFormatter> = todo!();
     /// # async {
     /// let result = cache
-    ///     .cached("my_cache_key", &["tag1", "tag2"], None, async {
+    ///     .cached("my_cache_key", &["tag1", "tag2"], None, || async {
     ///         (1..=1000000).sum::<u64>()
     ///     })
     ///     .await
@@ -180,7 +180,7 @@ where
         key: K,
         tags: &[&str],
         ttl: Option<Duration>,
-        func: F,
+        func: impl FnOnce() -> F,
     ) -> Result<T, Error<B, S>>
     where
         F: Future<Output = T>,
@@ -190,7 +190,7 @@ where
         if let Some(value) = self.get(&key).await? {
             return Ok(value);
         }
-        let value = func.await;
+        let value = func().await;
         self.put(&key, &value, tags, ttl).await?;
         Ok(value)
     }
@@ -205,7 +205,7 @@ where
     /// let cache: AsyncCache<AsyncRedisBackend<MultiplexedConnection>, PostcardFormatter> = todo!();
     /// # async {
     /// let result = cache
-    ///     .cached_option("my_cache_key", &["tag1", "tag2"], None, async {
+    ///     .cached_option("my_cache_key", &["tag1", "tag2"], None, || async {
     ///         if todo!() {
     ///             Some((1..=1000000).sum::<u64>()) // cached
     ///         } else {
@@ -222,14 +222,14 @@ where
         key: K,
         tags: &[&str],
         ttl: Option<Duration>,
-        func: F,
+        func: impl FnOnce() -> F,
     ) -> Result<Option<T>, Error<B, S>>
     where
         F: Future<Output = Option<T>>,
         T: Serialize + DeserializeOwned,
         K: Serialize,
     {
-        self.cached_result(key, tags, ttl, async { func.await.ok_or(()) })
+        self.cached_result(key, tags, ttl, || async { func().await.ok_or(()) })
             .await
             .map(Result::ok)
     }
@@ -244,7 +244,7 @@ where
     /// let cache: AsyncCache<AsyncRedisBackend<MultiplexedConnection>, PostcardFormatter> = todo!();
     /// # async {
     /// let result = cache
-    ///     .cached_result("my_cache_key", &["tag1", "tag2"], None, async {
+    ///     .cached_result("my_cache_key", &["tag1", "tag2"], None, || async {
     ///         if todo!() {
     ///             Ok((1..=1000000).sum::<u64>()) // cached
     ///         } else {
@@ -261,7 +261,7 @@ where
         key: K,
         tags: &[&str],
         ttl: Option<Duration>,
-        func: F,
+        func: impl FnOnce() -> F,
     ) -> Result<Result<T, E>, Error<B, S>>
     where
         F: Future<Output = Result<T, E>>,
@@ -271,7 +271,7 @@ where
         if let Some(value) = self.get(&key).await? {
             return Ok(Ok(value));
         }
-        let value = match func.await {
+        let value = match func().await {
             Ok(x) => x,
             Err(err) => return Ok(Err(err)),
         };
